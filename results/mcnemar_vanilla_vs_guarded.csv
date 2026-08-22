@@ -1,6 +1,6 @@
 model,n_prompts,vanilla_fixed_by_guarded,guarded_made_it_worse,discordant_pairs,p_value,significant_at_0.05
 anthropic/claude-haiku-4.5,82,12,2,14,0.0129,True
-google/gemini-3.7-flash,82,47,0,47,0.0,True
+google/gemini-3.7-flash,82,32,0,32,0.0,True
 openai/gpt-4o-mini,82,12,4,16,0.0768,False
 openai/gpt-oss-20b:free,25,7,0,7,0.0156,True
 z-ai/glm-5.2:free,20,9,2,11,0.0654,False

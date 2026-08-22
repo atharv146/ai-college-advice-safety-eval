@@ -69,9 +69,20 @@ def complete_messages(model: str, messages: list[dict], max_retries: int = 8) ->
                     "model": model,
                     "messages": messages,
                     "temperature": 0.4,
-                    "max_tokens": 800,
+                    # 2500, not 800. Reasoning-capable models (Gemini 3.7
+                    # Flash confirmed live 2026-08-22) burn 700-800+ tokens
+                    # on MANDATORY internal reasoning that counts against
+                    # this budget before a single visible word is written,
+                    # and that reasoning cannot be disabled for this
+                    # endpoint (a live 400 confirmed that). At 800 total,
+                    # Gemini had ~45 words left for its actual answer and
+                    # got cut off mid-sentence on 64% of calls -- silently,
+                    # because truncated-but-nonempty text passed the old
+                    # "is it empty" check. 2500 was verified live to leave
+                    # ~450+ words of real answer with finish_reason=stop.
+                    "max_tokens": 2500,
                 },
-                timeout=60,
+                timeout=90,
             )
             if resp.status_code != 200:
                 if resp.status_code in RETRYABLE:
@@ -82,16 +93,27 @@ def complete_messages(model: str, messages: list[dict], max_retries: int = 8) ->
                 raise RuntimeError(f"{model}: HTTP {resp.status_code}: {resp.text[:300]}")
 
             data = resp.json()
+            choice = data.get("choices", [{}])[0]
             # .get("content", "") only falls back to "" when the key is
             # MISSING -- some providers return "content": null (a filtered
             # response) with the key present, which crashed .strip() on
             # None here until this fix. `or ""` catches both cases.
-            raw_content = data.get("choices", [{}])[0].get("message", {}).get("content")
+            raw_content = choice.get("message", {}).get("content")
             text = (raw_content or "").strip()
             if not text:
                 last_error = RuntimeError(f"{model}: empty completion")
                 time.sleep(2 * (attempt + 1))
                 continue
+            # A response that got cut off mid-generation is worse than no
+            # response: it silently corrupts whatever grades it later. Treat
+            # finish_reason == "length" as a hard failure, not a retry (more
+            # tokens already given above; retrying identically won't fix a
+            # provider that needs a token budget past what was requested).
+            if choice.get("finish_reason") == "length":
+                raise RuntimeError(
+                    f"{model}: truncated at max_tokens (finish_reason=length), "
+                    f"{len(text.split())} words returned"
+                )
             return text
         except requests.RequestException as e:
             last_error = e

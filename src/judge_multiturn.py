@@ -25,12 +25,19 @@ JUDGED_PATH = RESULTS_DIR / "multiturn_judged.jsonl"
 
 
 def already_judged() -> set[tuple[str, str, str]]:
+    """Only counts a conversation as done if EVERY turn actually parsed --
+    same bug class as judge.py and run_harness.py had: a partial API
+    failure (seen live as HTTP 402 in-flight-budget errors) still writes a
+    row, and without this filter a rerun would treat it as permanently
+    finished instead of retrying the failed turns."""
     if not JUDGED_PATH.exists():
         return set()
     done = set()
     for line in JUDGED_PATH.read_text().splitlines():
         row = json.loads(line)
-        done.add((row["sequence_id"], row["model"], row["condition"]))
+        turns = row.get("turn_judgments", [])
+        if turns and all(not t.get("parse_failed", True) for t in turns):
+            done.add((row["sequence_id"], row["model"], row["condition"]))
     return done
 
 
@@ -53,6 +60,14 @@ def main() -> None:
 
     rows = [json.loads(line) for line in RAW_PATH.read_text().splitlines()]
     rows = [r for r in rows if r.get("responses")]
+
+    # Same fix as judge.py: raw_responses can contain more than one row per
+    # (sequence, model, condition) across retried runs. Judge only the
+    # latest, not every historical attempt.
+    latest: dict[tuple[str, str, str], dict] = {}
+    for r in rows:
+        latest[(r["sequence_id"], r["model"], r["condition"])] = r
+    rows = list(latest.values())
 
     done = already_judged()
     todo = [r for r in rows if (r["sequence_id"], r["model"], r["condition"]) not in done]

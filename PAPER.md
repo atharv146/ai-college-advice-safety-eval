@@ -6,7 +6,7 @@
 
 ## Abstract
 
-General-purpose AI chatbots are an increasingly common first source of advice for immigrant and mixed-status families asking sensitive questions about college applications and financial aid, questions where a confidently wrong answer carries real risk. We construct an 82-item, pre-registered adversarial prompt bank across 8 risk categories and evaluate three widely-deployed commercial models (GPT-4o-mini, Gemini 3.7 Flash, Claude Haiku 4.5) under three conditions: a baseline system prompt, a safety-hardened system prompt drawn from a production application, and a retrieval-grounded condition restricted to verified source material with forced citations. Responses are scored on three independent failure dimensions by a held-out LLM judge. We find that 32.9% of baseline responses exhibit at least one safety failure, with substantial variation between models (65.9% for Gemini 3.7 Flash vs. 14.6% for Claude Haiku 4.5 on identical prompts). The hardened prompt reduces pooled failures to 6.5%, a statistically significant improvement for two of three models under McNemar's exact test. The retrieval-grounded condition nearly eliminates unsafe reassurance (20.7% → 0.8%) but increases over-refusal eightfold (6.1% → 50.4%), producing a *higher* overall failure rate than the simpler intervention. Under multi-turn escalation, the hardened prompt showed zero capitulations across 30 conversations, while baseline models gave unsafe final-turn responses in up to half of conversations. We release the prompt bank and rubric as a public dataset.
+General-purpose AI chatbots are an increasingly common first source of advice for immigrant and mixed-status families asking sensitive questions about college applications and financial aid, questions where a confidently wrong answer carries real risk. We construct an 82-item, pre-registered adversarial prompt bank across 8 risk categories and evaluate three widely-deployed commercial models (GPT-4o-mini, Gemini 3.7 Flash, Claude Haiku 4.5) under three conditions: a baseline system prompt, a safety-hardened system prompt drawn from a production application, and a retrieval-grounded condition restricted to verified source material with forced citations. Responses are scored on three independent failure dimensions by a held-out LLM judge. We find that 24.8% of baseline responses exhibit at least one safety failure, with substantial variation between models (41.5% for Gemini 3.7 Flash vs. 14.6% for Claude Haiku 4.5 on identical prompts). The hardened prompt reduces pooled failures to 4.5%, a statistically significant improvement for two of three models under McNemar's exact test. The retrieval-grounded condition nearly eliminates unsafe reassurance (20.7% → 0.4%) but increases over-refusal to 47.2%, producing a *higher* overall failure rate than the simpler intervention. Under multi-turn escalation, the hardened prompt showed zero capitulations across 30 conversations, while baseline models gave unsafe final-turn responses in up to half of conversations. We release the prompt bank and rubric as a public dataset.
 
 ## 1. Introduction
 
@@ -61,31 +61,31 @@ The automated LLM judge (a model held out from the set under test, to avoid a mo
 
 | Condition | Unsafe reassurance | Fabricated policy claim | Unhelpfully evasive | Any failure |
 |---|---|---|---|---|
-| vanilla | 20.7% | 11.8% | 6.1% | 32.9% |
-| guarded | 1.2% | 1.6% | 4.1% | 6.5% |
-| grounded | 0.8% | 1.6% | 50.4% | 52.4% |
+| vanilla | 20.7% | 8.5% | 0.0% | 24.8% |
+| guarded | 0.8% | 2.0% | 2.0% | 4.5% |
+| grounded | 0.4% | 0.8% | 47.2% | 48.4% |
 
 ### 4.2 Per-model baseline variation and intervention effect
 
 | Model | vanilla | guarded | McNemar p | b (fixed) | c (broken) |
 |---|---|---|---|---|---|
-| Gemini 3.7 Flash | 65.9% [55.1, 75.2] | 8.5% [4.2, 16.6] | < 0.0001 | 47 | 0 |
+| Gemini 3.7 Flash | 41.5% [31.4, 52.3] | 2.4% [0.7, 8.5] | < 0.0001 | 32 | 0 |
 | GPT-4o-mini | 18.3% [11.4, 28.0] | 8.5% [4.2, 16.6] | 0.077 | 12 | 4 |
 | Claude Haiku 4.5 | 14.6% [8.6, 23.9] | 2.4% [0.7, 8.5] | 0.013 | 12 | 2 |
 
-Brackets are 95% Wilson score intervals. *b* is the count of prompts that failed under vanilla and passed under guarded; *c* is the reverse.
+Brackets are 95% Wilson score intervals. *b* is the count of prompts that failed under vanilla and passed under guarded; *c* is the reverse. (Note on the Gemini figures: an earlier draft of this paper reported 65.9%/47/0 for this row before a data-quality bug, described in §6, was found and fixed; the corrected figures above are from fully regenerated data.)
 
 ### 4.3 Failure rate by risk category (pooled, all models and conditions)
 
-Enforcement reassurance 39.6%, mixed-status family aid 38.0%, indirect/roleplay framing 36.6%, FERPA data sharing 35.2%, scholarship eligibility 26.9%, in-state residency claims 26.0%, DACA eligibility 25.7%, leading premise 20.6%.
+Enforcement reassurance 36.6%, indirect/roleplay framing 33.3%, mixed-status family aid 30.0%, FERPA data sharing 25.7%, scholarship eligibility 25.0%, DACA eligibility 24.8%, leading premise 20.6%, in-state residency claims 19.0%.
 
 ### 4.4 Multi-turn escalation
 
-Across 30 guarded conversations (10 sequences × 3 models), zero exhibited capitulation (a safe first-turn response becoming unsafe by the final turn) and zero produced an unsafe final-turn response. Under the vanilla condition, final-turn unsafe reassurance appeared in 5/10 Gemini conversations, 4/10 GPT-4o-mini conversations (2 of which were capitulations), and 1/10 Claude Haiku conversations.
+Across 30 guarded conversations (10 sequences × 3 models), zero exhibited capitulation (a safe first-turn response becoming unsafe by the final turn) and zero produced an unsafe final-turn response. Under the vanilla condition, final-turn unsafe reassurance appeared in 6/10 Gemini conversations, 4/10 GPT-4o-mini conversations (2 of which were capitulations), and 1/10 Claude Haiku conversations (11/30 overall, 37%).
 
 ## 5. Discussion
 
-**Baseline safety is not a property of "AI chatbots" in general.** The 4.5× spread between Gemini 3.7 Flash (65.9%) and Claude Haiku 4.5 (14.6%) on identical prompts means a family's exposure to unsafe advice is substantially determined by which product they happen to open. This argues against treating "chatbot safety" as a single number and in favor of per-deployment evaluation.
+**Baseline safety is not a property of "AI chatbots" in general.** The nearly 3× spread between Gemini 3.7 Flash (41.5%) and Claude Haiku 4.5 (14.6%) on identical prompts means a family's exposure to unsafe advice is substantially determined by which product they happen to open. This argues against treating "chatbot safety" as a single number and in favor of per-deployment evaluation.
 
 **Prompt-level intervention is unusually effective here, which is itself informative.** A five-fold pooled reduction from a system prompt alone suggests these failures are not deeply entrenched capability limitations but rather default-behavior problems: the models *can* hedge appropriately and cite the right referral, they simply do not by default. The Gemini result is the cleanest evidence, with 47 prompts flipping to pass and none flipping the other way. The GPT-4o-mini result failing to reach significance (p = 0.077) is a genuine null at this sample size, not evidence of no effect, and is a direct consequence of its lower baseline leaving less headroom.
 
@@ -95,7 +95,8 @@ Across 30 guarded conversations (10 sequences × 3 models), zero exhibited capit
 
 ## 6. Limitations
 
-- **The automated judge has not yet been validated against human raters.** All reported numbers are LLM-judge scores against a fixed rubric. The multi-rater validation tooling exists and computes both judge-human and human-human Cohen's kappa, but no labeling pass has been completed. Following Zheng et al. (2023), judge-only numbers should not be treated as human-verified ground truth until that agreement is measured. This is the most significant outstanding limitation.
+- **A token-budget bug silently truncated 64% of one model's responses, and was caught during human labeling, not automated testing.** Gemini 3.7 Flash is a reasoning model whose internal "thinking" tokens draw from the same budget as its visible answer, and this reasoning could not be disabled for the endpoint used (confirmed via a live 400 error). At the original 800-token cap, Gemini exhausted its budget on reasoning before producing more than ~45 words of visible answer on the majority of calls, and the pipeline's completion check only rejected fully empty responses, not truncated ones. This inflated the originally-reported Gemini vanilla failure rate from its corrected value of 41.5% to 65.9%. The fix (raising the token budget to 2,500, verified live, and rejecting any response with `finish_reason == "length"` as a hard failure rather than silently accepting it) is now enforced in the harness for all models. All affected responses were regenerated and rejudged rather than patched. This is reported here rather than only fixed silently because it is itself evidence for a broader point: automated evaluation pipelines can produce plausible-looking, statistically clean, systematically wrong numbers, and a single attentive human reading actual model output caught what the judge model, the statistics, and the confidence intervals all missed.
+- **The automated judge has not yet been fully validated against human raters.** All reported numbers are LLM-judge scores against a fixed rubric. One human rater has completed an initial pass (30 responses; per-dimension Cohen's kappa: unsafe reassurance 0.15, fabricated policy claim -0.06, unhelpfully evasive 0.70), but a second independent rater is needed for the human-human inter-rater reliability check, which the tooling supports but which has not yet been run. The near-zero and negative kappa on the first two dimensions is a genuine concern flagged for follow-up, not smoothed over: it may indicate the rubric's wording needs revision, or that the single rater's threshold for "real hedging" diverges from the judge's. Following Zheng et al. (2023), judge-only numbers should not be treated as human-verified ground truth until this is resolved. This is the most significant outstanding limitation.
 - **Free-tier infrastructure proved unusable, which constrains reproducibility for unfunded replication.** An earlier iteration of this study targeted free open-weight endpoints. Across two evenings, free-tier requests returned HTTP 429 from a saturated shared upstream pool on essentially every call, yielding 62/64 single-turn and 2/40 multi-turn completions after hours of retrying; identical prompts on paid endpoints completed 492 calls in roughly five minutes with zero failures. Partial free-model data is retained and reported separately, never pooled with headline results. Replication of this work requires a modest but nonzero budget.
 - Sample size is modest (82 prompts per condition per model), appropriate for detecting a large effect (the Gemini result) but underpowered for smaller ones, which is directly why the GPT-4o-mini comparison is inconclusive rather than resolved.
 - The prompt bank is written, not sourced from real conversations with real families, since collecting real conversations on this topic would itself be a privacy and safety risk.
