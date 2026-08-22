@@ -11,23 +11,41 @@ When immigrant and mixed-status families ask AI chatbots about college financial
 
 ## 2 · Approach
 
-Fine-tune small open-weight models (Llama 3.2 1B / 3B, Qwen 2.5 7B) as dedicated binary classifiers over three failure dimensions (false reassurance, fabricated policy claim, unhelpful evasion), in the architectural style of Llama Guard: a separate model that reads a (question, response) pair and emits calibrated per-dimension scores, rather than an instruction embedded in the generator.
+Fine-tune 7B-class open-weight models as a **generative** guard: given a (question, response) pair, the model emits a short structured verdict plus a one-sentence rationale, trained with the standard next-token objective rather than a binary classification head.
 
-Why this rather than more prompt engineering: prompt-level intervention has already been shown to work in my preliminary results, so the open question is not *whether* the behavior can be suppressed but whether it can be **detected independently of the generator**. A guard model is deployment-agnostic (works in front of any model), auditable (produces a score, not a vibe), and cheap enough to run on every response, which a GPT-4o judge is not.
+**On the objective (revised after reviewer feedback).** An earlier draft of this proposal described "binary classifiers" while simultaneously citing Llama Guard as the architectural model. That was internally inconsistent: Llama Guard is a *generative* classifier that produces verdict tokens through the LM head, not a discriminative head trained with BCE. The reviewer's objection to a pure BCE formulation is well taken and the design is changed accordingly:
 
-The scaling comparison across 1B/3B/7B is a core part of the experiment, not a convenience: the practical question for anyone deploying this is the smallest model that retains acceptable recall on a rare, high-cost failure.
+- **Verdict tokens through the LM head**, so the training signal is ordinary token-level cross-entropy, the objective the base model was actually pretrained under, rather than a freshly-initialized classification head fighting it.
+- **Rationale supervision alongside the verdict**, which is where the semantic component enters. The model must generate *why* a response is unsafe, not just emit a label. This is free to implement: the 840 already-graded examples each carry a judge-written rationale (`rationale` field in `results/judged.jsonl`), so the supervision signal already exists in the collected data.
+- **Label smoothing on the verdict tokens**, because the rubric's own boundary is genuinely fuzzy (the first human-validation pass produced Cohen's kappa of only 0.15 on the unsafe-reassurance dimension), and hard 0/1 targets would train the model to be more confident than the labels justify.
 
-**The generalization test is the actual research question.** I will hold out entire risk categories from training (e.g. train without FERPA and residency prompts, test on them) to measure whether the guard learns a transferable notion of unsafe reassurance or merely memorizes topic surface features. A guard that only works on categories it has seen is not useful, since the next unsafe question a family asks will not be in anyone's training set.
+**On architecture (revised after reviewer feedback).** The reviewer's suggestion to pair a lower-rank LoRA with a separate small component rather than embed factuality in the adapter maps unusually cleanly onto this task, because the three rubric dimensions decompose along exactly that line:
+
+| Dimension | Nature | Handled by |
+|---|---|---|
+| Unsafe reassurance | pragmatic / stylistic — is the hedging real? | low-rank LoRA |
+| Unhelpfully evasive | pragmatic / stylistic | low-rank LoRA |
+| Fabricated policy claim | **factual** — is this claim actually state-varying? | separate lightweight checker |
+
+Trying to bake "which policies vary by state" into adapter weights is exactly the kind of factual memorization LoRA is poorly suited to, and it would go stale the moment a state changes its law. Splitting it out means the factual component can be updated without retraining anything. Adopting this.
+
+Why a guard model at all rather than more prompt engineering: prompt-level intervention already works in my preliminary results, so the open question is not *whether* the behavior can be suppressed but whether it can be **detected independently of the generator**. A guard is deployment-agnostic (sits in front of any model), auditable (emits a verdict and a reason), and cheap enough to run on every response, which a GPT-4o judge is not.
+
+**Model selection (revised after reviewer feedback).** The original 1B/3B/7B scaling ladder is dropped. The reviewer is right that sub-7B models likely lack the reasoning to distinguish appropriate hedging from false reassurance, which would produce three failed runs and one usable one. The primary axis is now **7B-class across three model families** (Llama, Qwen, Mistral), which isolates a cleaner question: does this task transfer across pretraining lineages, or is it an artifact of one? One 3B run is retained as a single deployment-cost probe, explicitly expected to underperform; if it fails, "the task requires ≥7B" is a concrete, useful finding for anyone planning to deploy a guard cheaply, and it costs one run to establish.
+
+**The generalization test remains the actual research question.** I hold out entire risk categories from training (e.g. train without FERPA and residency prompts, test on them) to measure whether the guard learns a transferable notion of unsafe reassurance or merely memorizes topic surface features. A guard that only works on categories it has seen is not useful, since the next unsafe question a family asks will not be in anyone's training set.
 
 ## 3 · Dataset
 
 **Existing, in hand:** 840 (question, response) pairs already graded on all three dimensions by a held-out GPT-4o judge, spanning 5 models × 3 intervention conditions × 82 prompts, plus 65 graded multi-turn conversations. Prompts and rubric are already published under CC-BY-4.0.
 
-**Expansion plan:** widen generation to ~10 models × 3 conditions across the existing prompt bank plus paraphrase augmentation of the prompts themselves, targeting 8,000–12,000 labeled pairs. Labels come from the same GPT-4o judge (distillation), which is the standard construction for guard-model training data.
+**Expansion plan:** widen generation to ~10 models × 3 conditions across the existing prompt bank, targeting 8,000–12,000 labeled pairs. Labels come from the same GPT-4o judge (distillation), the standard construction for guard-model training data.
+
+Per the reviewer's suggestion, **systematic prompt engineering is used as the primary augmentation lever** rather than paraphrase alone. Varying the *system* prompt across a spectrum (unguarded → partially hedged → fully hardened → grounded) is what actually produces the hard, near-boundary examples this task needs: responses that hedge somewhat but not enough. Paraphrasing user questions mostly produces easy duplicates; varying the generating conditions produces genuine label diversity along the decision boundary. Both are used, weighted toward the latter.
 
 **Held-out evaluation set:** a human-labeled subset is the ground truth for final numbers, specifically because a guard distilled from an LLM judge will inherit that judge's blind spots, and only human labels can measure that. Multi-rater tooling (Cohen's kappa, judge-vs-human and human-vs-human) is already built in the preliminary repo.
 
-**Preprocessing:** dimension labels are binary and independent; class imbalance is severe (false reassurance is ~1% under hardened prompts, ~21% under baseline) and will be handled with condition-stratified sampling and threshold tuning rather than naive resampling.
+**Preprocessing:** the three dimensions are scored independently; class imbalance is severe (false reassurance is ~1% under hardened prompts vs. ~21% under baseline) and is handled with condition-stratified sampling and threshold tuning rather than naive resampling. Verdict targets carry label smoothing, per §2.
 
 ## 4 · Metrics
 
@@ -41,27 +59,24 @@ The scaling comparison across 1B/3B/7B is a core part of the experiment, not a c
 
 ## 5 · Compute
 
-**Request: 18 GPU-hours** (11 core + 7 buffer), single GPU, no multi-node.
+**Request: 12 GPU-hours**, single 16 GB-class GPU, no multi-node. Revised down from 18 after reviewer feedback (int8 + lower LoRA rank, and dropping the 1B/3B scaling ladder).
 
-The estimate is derived from the measured shape of the existing labeled data rather than assumed. Across the 840 responses already collected, mean length is 16 words (question) + 147 words (response) ≈ **219 tokens per training example**. At a 10,000-example target that is **2.2M tokens per epoch**, which is small: sequences are short, so batches pack efficiently and a single fine-tune is minutes, not hours.
+The estimate is derived from the measured shape of the existing labeled data. Across the 840 responses already collected, mean length is 16 words (question) + 147 words (response) ≈ **219 tokens per example**; adding rationale supervision brings the training sequence to ≈240 tokens. At a 10,000-example target that is **≈2.4M tokens per epoch**, which is small: sequences are short, so batches pack efficiently.
 
-Assuming conservative LoRA throughput on one MI250X-class GPU (15k / 7k / 3.5k tok·s⁻¹ for 1B / 3B / 7B):
+**15 training runs total:**
 
-| Phase | Work | Hours |
-|---|---|---|
-| 1 | Hyperparameter sweep, 6 configs on 3B only | 1.6 |
-| 2 | Best config trained at all three sizes | 0.9 |
-| 3 | **Leave-one-category-out, 8 folds × 3 sizes** (the headline experiment) | 7.3 |
-| 4 | Evaluation and inference passes | 1.5 |
-| | **Core total** | **11.2** |
-| | Buffer (60%): ROCm environment setup, failed runs, reruns | 6.7 |
-| | **Requested** | **18.0** |
+| Work | Runs |
+|---|---|
+| Hyperparameter sweep (LoRA rank, LR, label-smoothing ε) | 4 |
+| **Leave-one-category-out, 8 folds on the primary family** (headline experiment) | 8 |
+| Cross-family replication at 7B (Qwen, Mistral), full data | 2 |
+| 3B deployment-cost probe | 1 |
 
-A single 3-epoch run is ~7 min (1B), ~16 min (3B), ~31 min (7B). Phase 3 dominates because leave-one-category-out is 24 separate training runs; that is the cost of the generalization result, and it is the part I would protect if the budget were cut.
+At 3 epochs and a **conservative** 3,000 tok·s⁻¹ for 7B int8 + low-rank LoRA, a run is ~40 min → 10 h, plus ~1 h of evaluation and inference passes ≈ **11 h**. At the more optimistic 5,000 tok·s⁻¹ the same grid completes in ~7 h. **12 is requested to cover the conservative case with modest headroom; the realistic floor is ~7.**
 
-**Memory:** ~20–40 GB VRAM for 7B bf16 + LoRA; fits a single MI250X or MI300X with headroom. QLoRA is available as a fallback if memory is tighter than expected.
+**Memory:** the reviewer's figure is right and my original was inflated. 7B at int8 with a low-rank adapter is ≈7 GB of weights plus optimizer/activation overhead, comfortably inside a 16 GB card. The earlier 20–40 GB estimate assumed bf16 and a higher rank, neither of which the revised design needs.
 
-**Verification commitment:** the throughput figures above are literature-standard, not measured on AMD hardware. I will benchmark actual tokens·s⁻¹ in the first 30 minutes of access and report the revised estimate before consuming the rest of the allocation. If real throughput is materially worse, I will cut the 1B tier first (it is the most likely to fail the task anyway) rather than reduce the number of holdout folds.
+**Verification commitment:** throughput figures are literature-standard, not measured on AMD hardware. I will benchmark actual tokens·s⁻¹ in the first 30 minutes of access and report a revised estimate before consuming the rest of the allocation. If real throughput is materially worse, I cut the cross-family replications and the 3B probe first, and protect the 8 holdout folds, which are the result the project exists to produce.
 
 **Dependencies:** PyTorch (ROCm build), HuggingFace `transformers` / `peft` / `trl` / `datasets`, `scikit-learn`. No CUDA-only kernels are required for LoRA fine-tuning at this scale.
 
@@ -70,15 +85,17 @@ A single 3-epoch run is ~7 min (1B), ~16 min (3B), ~31 min (7B). Phase 3 dominat
 ## 6 · Deliverables
 
 1. **Model weights** for the best-performing guard, released on HuggingFace under a permissive license.
-2. **A paper** (draft structure already written) reporting the scaling comparison, the cross-category generalization result, and the safety/over-refusal frontier. Target: an AI-safety or socially-responsible-NLP workshop.
+2. **A paper** (draft structure already written) reporting the cross-family comparison, the cross-category generalization result, and the safety/over-refusal frontier. Target: an AI-safety or socially-responsible-NLP workshop.
 3. **An expanded public dataset**: ~10k labeled (question, response, 3-dimension label) pairs, the first for this domain.
 4. **A demo**: a small hosted endpoint that scores a pasted chatbot response, so the artifact is inspectable without running anything.
 
 ## 7 · Risk
 
-**What breaks first: label quality.** The guard is distilled from an LLM judge, so any systematic judge bias becomes a systematic guard bias. *Plan B:* the human-labeled held-out set is built before training, not after, so this is measured rather than discovered late. If judge-human kappa on the seed labels is poor (< 0.6), I revise the rubric and re-label before spending any GPU time on training.
+**What breaks first: label quality. This is already partially realized and is the reason for a hard gate before any GPU time is used.** The guard is distilled from an LLM judge, so systematic judge bias becomes systematic guard bias. The first human-validation pass has now been run and is not reassuring: on 20 jointly-labeled responses, judge-human Cohen's kappa was **0.70 on unhelpfully-evasive but only ~0.15 on unsafe-reassurance and near zero on fabricated-policy-claim**. Raw agreement is high (60–87%) but kappa is low, the signature of a heavily imbalanced class where agreement is mostly agreement on the easy negatives.
 
-**Second risk: the small models cannot learn the task.** Distinguishing appropriate hedging from false reassurance is subtle, and 1B may simply lack the capacity. *Plan B:* the scaling comparison is designed so this is a reportable result rather than a failure. "The task requires ≥XB parameters" is a useful finding for anyone deploying a guard, and the 7B tier is a realistic fallback if the small tiers fail.
+*Plan A, before requesting the cluster:* diagnose whether that is rubric ambiguity (fixable by sharpening the wording, especially the boundary of "real hedging") or a genuine judge failure, add a second independent rater for the human-human reliability number the tooling already computes, and re-label. **I will not spend GPU hours distilling a judge whose labels I cannot yet defend**, and would rather report that gate honestly than train on top of it.
+
+**Second risk: 7B is insufficient for the task.** Distinguishing appropriate hedging from false reassurance is a subtle pragmatic judgment. *Plan B:* the cross-family replication at 7B is the diagnostic. If all three families fail similarly, that points to task difficulty rather than a bad checkpoint, and "this task is not learnable at 7B from ~10k distilled labels" is a reportable, useful negative result. The retained 3B probe provides the lower bound of that curve at the cost of one run.
 
 **Third risk: cross-category generalization fails.** The guard may learn topic keywords instead of the underlying failure mode. *Plan B:* this is precisely the experiment, not an accident. A negative result here is publishable and directly useful, it would show that guard models for high-stakes advice need per-domain training data rather than transferring, which is important for anyone planning to deploy one. My preliminary work already reports a counterintuitive negative result (the retrieval-grounding tradeoff) rather than burying it, and I would treat this the same way.
 
