@@ -41,10 +41,31 @@ The scaling comparison across 1B/3B/7B is a core part of the experiment, not a c
 
 ## 5 · Compute
 
-- **Training:** LoRA / QLoRA fine-tunes of 1B, 3B, and 7B models. Estimated 20–40 GB VRAM for the 7B bf16 LoRA configuration; comfortably within a single MI250X or MI300X.
-- **Estimated budget:** ~60–80 GPU-hours total, covering three model sizes × a small hyperparameter sweep (LR, LoRA rank, class weighting) × the category-holdout folds. Individual runs are on the order of 2–4 hours.
-- **Dependencies:** PyTorch (ROCm build), HuggingFace `transformers` / `peft` / `trl`, `datasets`, `scikit-learn`. All ROCm-compatible; no CUDA-only kernels required for LoRA fine-tuning at this scale.
-- **Data generation** runs on commercial inference APIs and is self-funded (prior full run cost ≈ $2), so no cluster time is spent on it.
+**Request: 18 GPU-hours** (11 core + 7 buffer), single GPU, no multi-node.
+
+The estimate is derived from the measured shape of the existing labeled data rather than assumed. Across the 840 responses already collected, mean length is 16 words (question) + 147 words (response) ≈ **219 tokens per training example**. At a 10,000-example target that is **2.2M tokens per epoch**, which is small: sequences are short, so batches pack efficiently and a single fine-tune is minutes, not hours.
+
+Assuming conservative LoRA throughput on one MI250X-class GPU (15k / 7k / 3.5k tok·s⁻¹ for 1B / 3B / 7B):
+
+| Phase | Work | Hours |
+|---|---|---|
+| 1 | Hyperparameter sweep, 6 configs on 3B only | 1.6 |
+| 2 | Best config trained at all three sizes | 0.9 |
+| 3 | **Leave-one-category-out, 8 folds × 3 sizes** (the headline experiment) | 7.3 |
+| 4 | Evaluation and inference passes | 1.5 |
+| | **Core total** | **11.2** |
+| | Buffer (60%): ROCm environment setup, failed runs, reruns | 6.7 |
+| | **Requested** | **18.0** |
+
+A single 3-epoch run is ~7 min (1B), ~16 min (3B), ~31 min (7B). Phase 3 dominates because leave-one-category-out is 24 separate training runs; that is the cost of the generalization result, and it is the part I would protect if the budget were cut.
+
+**Memory:** ~20–40 GB VRAM for 7B bf16 + LoRA; fits a single MI250X or MI300X with headroom. QLoRA is available as a fallback if memory is tighter than expected.
+
+**Verification commitment:** the throughput figures above are literature-standard, not measured on AMD hardware. I will benchmark actual tokens·s⁻¹ in the first 30 minutes of access and report the revised estimate before consuming the rest of the allocation. If real throughput is materially worse, I will cut the 1B tier first (it is the most likely to fail the task anyway) rather than reduce the number of holdout folds.
+
+**Dependencies:** PyTorch (ROCm build), HuggingFace `transformers` / `peft` / `trl` / `datasets`, `scikit-learn`. No CUDA-only kernels are required for LoRA fine-tuning at this scale.
+
+**Not requested:** all data generation, judging, and evaluation of commercial models runs on inference APIs and is self-funded (the completed prior study cost ≈ $2). No cluster time is spent on data collection.
 
 ## 6 · Deliverables
 
