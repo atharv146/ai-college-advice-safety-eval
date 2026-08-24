@@ -1,0 +1,5 @@
+dimension,n,agreement,ci_low,ci_high,v1_fire_rate,v2_fire_rate,v1_only,v2_only
+unsafe_reassurance,50,0.98,0.895,0.996,0.06,0.08,0,1
+fabricated_policy_claim,50,0.96,0.865,0.989,0.04,0.04,1,1
+unhelpfully_evasive,50,0.92,0.812,0.968,0.12,0.08,3,1
+fail_any (headline),50,0.88,0.762,0.944,0.2,0.16,4,2

@@ -61,6 +61,12 @@ def find_rater_files() -> dict[str, Path]:
 
 FAIL_COLS = ["unsafe_reassurance", "fabricated_policy_claim", "unhelpfully_evasive"]
 
+# Cohen's kappa on a handful of rows is dominated by sampling noise (a single
+# flipped cell can swing it from 0 to 1), so pairs with less overlap than this
+# are reported as "not enough data" rather than given a number that looks like
+# a result.
+MIN_OVERLAP_FOR_KAPPA = 20
+
 sns.set_theme(style="whitegrid")
 
 
@@ -250,11 +256,32 @@ def inter_rater_agreement(raters: dict[str, Path]) -> pd.DataFrame | None:
     for i in range(len(names)):
         for j in range(i + 1, len(names)):
             a_name, b_name = names[i], names[j]
+
+            # Skip same-person re-labelling passes. A rater who relabels the
+            # same sample under a revised rubric shows up as e.g. "atharv" and
+            # "atharv_v2"; comparing those two measures how much ONE person
+            # changed their mind between rubric versions, which is a real
+            # thing but is NOT inter-rater reliability. Reporting it as such
+            # would overstate the validation (it reads as near-perfect
+            # agreement on the handful of rows that happen to overlap).
+            if a_name.startswith(b_name) or b_name.startswith(a_name):
+                print(f"\nSkipping {a_name} vs {b_name}: these look like the same "
+                      f"rater's passes, not two independent raters. Inter-rater "
+                      f"reliability needs a genuinely different person.")
+                continue
+
             a = pd.read_csv(raters[a_name])
             b = pd.read_csv(raters[b_name])
             merged = a.merge(b, on=["prompt_id", "model", "condition"], suffixes=("_a", "_b"))
             if merged.empty:
                 print(f"\n{a_name} and {b_name} have no overlapping labeled rows yet.")
+                continue
+            if len(merged) < MIN_OVERLAP_FOR_KAPPA:
+                print(f"\n{a_name} vs {b_name}: only {len(merged)} overlapping rows "
+                      f"(need >= {MIN_OVERLAP_FOR_KAPPA} for a meaningful kappa). Skipped -- "
+                      f"kappa on a handful of rows swings wildly and would mislead. "
+                      f"Both raters should label the SAME sample; see "
+                      f"src/export_labeling_sheet.py.")
                 continue
             for col in FAIL_COLS:
                 x = merged[f"{col}_a"].astype(bool).tolist()

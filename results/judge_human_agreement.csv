@@ -1,4 +1,7 @@
 rater,dimension,n,raw_agreement,cohens_kappa
-atharv,unsafe_reassurance,30,0.6,0.151
-atharv,fabricated_policy_claim,30,0.8,-0.059
-atharv,unhelpfully_evasive,30,0.867,0.701
+atharv,unsafe_reassurance,20,0.65,0.146
+atharv,fabricated_policy_claim,20,0.8,0.0
+atharv,unhelpfully_evasive,20,0.9,0.78
+atharv_v2,unsafe_reassurance,150,0.9,0.233
+atharv_v2,fabricated_policy_claim,150,0.88,0.193
+atharv_v2,unhelpfully_evasive,150,0.86,0.462
