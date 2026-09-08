@@ -5,3 +5,6 @@ atharv,unhelpfully_evasive,20,0.9,0.78
 atharv_v2,unsafe_reassurance,150,0.9,0.233
 atharv_v2,fabricated_policy_claim,150,0.88,0.193
 atharv_v2,unhelpfully_evasive,150,0.86,0.462
+rater2,unsafe_reassurance,150,0.953,0.607
+rater2,fabricated_policy_claim,150,0.82,0.204
+rater2,unhelpfully_evasive,150,0.887,0.612
