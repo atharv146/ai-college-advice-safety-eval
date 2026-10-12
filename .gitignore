@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .DS_Store
 .env
+
+# Smoke-test outputs verify the pipeline runs; their numbers are not results.
+guard/results/*smoke*

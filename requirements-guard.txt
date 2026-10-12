@@ -1,0 +1,16 @@
+# Guard-model (Paper 2) dependencies. Separate from requirements.txt so the
+# benchmark paper doesn't pull in torch. Pinned to the versions the smoke
+# test passed on.
+#
+# NOTE for the T4: the QLoRA arm (Arm C) additionally needs `peft` and
+# `bitsandbytes`. bitsandbytes is CUDA-only and will not install on macOS,
+# so install those two on the GPU machine only.
+
+torch==2.14.1
+transformers==5.19.0
+datasets==5.1.0
+sentencepiece==0.2.2
+protobuf==7.36.2
+accelerate==1.15.0
+scikit-learn==1.9.0
+numpy==2.5.2
