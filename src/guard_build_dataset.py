@@ -25,12 +25,20 @@ Label source
 --labels points at a judged file. It defaults to results/judged.jsonl, which
 holds rubric-v1 labels. Those are fine for verifying the pipeline runs, but
 the guard should be trained on rubric-v3 labels: v1's unsafe_reassurance
-definition is the one that produced human-human kappa 0.118. Re-label first
-(src/guard_relabel_v3.py), then rebuild with --labels pointing at the output.
+definition is the one that produced human-human kappa 0.118. Re-label first,
+then rebuild with --labels pointing at the output:
+
+  python src/rejudge_v2.py --model openai/gpt-4o-mini --out guard/labels_v3_mini.jsonl
+  python src/guard_build_dataset.py --labels guard/labels_v3_mini.jsonl
+
+(~$0.13 for all 840. gpt-4o-mini is used for TRAINING labels only; the gold
+set stays judged by gpt-4o, which is the teacher the guard is measured
+against. Note gpt-4o-mini is also one of the generating models, so on its own
+responses it is grading itself -- report label agreement split by generator.)
 
 Usage:
   python src/guard_build_dataset.py                          # v1 labels
-  python src/guard_build_dataset.py --labels guard/labels_v3.jsonl
+  python src/guard_build_dataset.py --labels guard/labels_v3_mini.jsonl
 """
 
 import argparse

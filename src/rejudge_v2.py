@@ -35,7 +35,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import budget
-from src.judge import JUDGE_SYSTEM_PROMPT, build_user_message, parse_judgment
+from src.judge import (JUDGE_SYSTEM_PROMPT, RUBRIC_VERSION, build_user_message,
+                       parse_judgment)
 from src.models import JUDGE_MODEL
 from src.openrouter_client import complete
 
@@ -43,10 +44,36 @@ RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 RAW_PATH = RESULTS_DIR / "raw_responses.jsonl"
 OUT_PATH = RESULTS_DIR / "judged_v2.jsonl"
 
-# Rough per-response cost at gpt-4o rates, measured from the existing corpus
+# Rough per-response cost by judge model, measured from the existing corpus
 # (~730 input tokens + ~60 output tokens per call). Used only for the
-# pre-flight budget check, not for billing.
-EST_COST_PER_RESPONSE = 0.0024
+# pre-flight budget check, not for billing. Model-aware because a gpt-4o
+# estimate applied to a gpt-4o-mini run overstates cost ~15x and makes the
+# budget guard refuse a run that is easily affordable.
+EST_COST_PER_RESPONSE = {
+    "openai/gpt-4o": 0.0024,
+    "openai/gpt-4o-mini": 0.00015,
+}
+
+
+def check_version_consistency(path: Path, judge_model: str) -> None:
+    """Refuse to append to a file graded under a different rubric version or
+    judge. Resume logic skips rows already present, so mixing would silently
+    produce a file that is part one version and part another -- and every
+    downstream comparison would report the blend as if it were one thing.
+    This is the fourth time a version-drift bug has come up in this project;
+    this check exists so it cannot happen through this script."""
+    if not path.exists():
+        return
+    seen = set()
+    for line in path.read_text().splitlines():
+        r = json.loads(line)
+        seen.add((r.get("rubric_version"), r.get("judge_model", JUDGE_MODEL)))
+    if seen and seen != {(RUBRIC_VERSION, judge_model)}:
+        raise SystemExit(
+            f"{path} already contains rows graded as {sorted(seen)}, but this run "
+            f"would grade as {(RUBRIC_VERSION, judge_model)}. Refusing to mix them.\n"
+            f"Pass --out with a fresh path, e.g. results/judged_{RUBRIC_VERSION}.jsonl"
+        )
 
 
 def load_latest_responses() -> dict:
@@ -60,11 +87,11 @@ def load_latest_responses() -> dict:
     return latest
 
 
-def already_done() -> set:
-    if not OUT_PATH.exists():
+def already_done(path: Path) -> set:
+    if not path.exists():
         return set()
     done = set()
-    for line in OUT_PATH.read_text().splitlines():
+    for line in path.read_text().splitlines():
         row = json.loads(line)
         if not row.get("judge_parse_failed", True):
             done.add((row["prompt_id"], row["model"], row["condition"]))
@@ -80,10 +107,22 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--floor", type=float, default=0.05,
                         help="abort if remaining balance falls below this")
+    parser.add_argument("--model", default=JUDGE_MODEL,
+                        help=f"judge model (default {JUDGE_MODEL}). gpt-4o-mini is ~15x "
+                             "cheaper and is what the guard's training labels use")
+    parser.add_argument("--out", default=str(OUT_PATH),
+                        help="output file; must be fresh or already graded under the "
+                             "same rubric version and judge")
     args = parser.parse_args()
+    out_path = Path(args.out)
 
     if not RAW_PATH.exists():
         raise SystemExit("No results/raw_responses.jsonl yet.")
+    if args.model not in EST_COST_PER_RESPONSE:
+        raise SystemExit(f"No cost estimate for {args.model}; add it to EST_COST_PER_RESPONSE "
+                         "so the budget guard can do its job.")
+
+    check_version_consistency(out_path, args.model)
 
     latest = load_latest_responses()
     keys = sorted(latest.keys())
@@ -92,22 +131,22 @@ def main() -> None:
         rng = random.Random(args.seed)
         keys = rng.sample(keys, min(args.sample, len(keys)))
 
-    done = already_done()
+    done = already_done(out_path)
     todo = [k for k in keys if k not in done]
 
-    est = len(todo) * EST_COST_PER_RESPONSE
+    est = len(todo) * EST_COST_PER_RESPONSE[args.model]
     budget.require_budget(est, reserve=args.floor)
 
-    print(f"Re-grading {len(todo)} responses under the v2 judge prompt "
-          f"(model={JUDGE_MODEL}).")
+    print(f"Grading {len(todo)} responses under rubric {RUBRIC_VERSION} "
+          f"(judge={args.model}) -> {out_path}")
     if args.sample:
         print(f"Random subset of {len(keys)} (seed={args.seed}) -- for estimating "
-              f"the v1->v2 shift, not for replacing the headline numbers.\n")
+              f"the grading shift, not for replacing the headline numbers.\n")
 
     def judge_one(key):
         row = latest[key]
         try:
-            raw = complete(JUDGE_MODEL, JUDGE_SYSTEM_PROMPT,
+            raw = complete(args.model, JUDGE_SYSTEM_PROMPT,
                            build_user_message(row["prompt_text"], row["response"]))
             j = parse_judgment(raw)
         except Exception as e:  # noqa: BLE001
@@ -115,7 +154,8 @@ def main() -> None:
         out = {
             "prompt_id": row["prompt_id"], "category": row["category"],
             "model": row["model"], "condition": row["condition"],
-            "judge_raw": raw, "rubric_version": "v2",
+            "judge_raw": raw, "rubric_version": RUBRIC_VERSION,
+            "judge_model": args.model,
         }
         if j:
             out.update({
@@ -135,7 +175,7 @@ def main() -> None:
 
     write_lock = threading.Lock()
     completed = 0
-    with open(OUT_PATH, "a") as f, concurrent.futures.ThreadPoolExecutor(
+    with open(out_path, "a") as f, concurrent.futures.ThreadPoolExecutor(
         max_workers=args.workers
     ) as pool:
         futures = [pool.submit(judge_one, k) for k in todo]
@@ -148,7 +188,7 @@ def main() -> None:
             if completed % 20 == 0:
                 print(f"  {completed}/{len(todo)}", flush=True)
 
-    print(f"\nDone. See {OUT_PATH}")
+    print(f"\nDone. See {out_path}")
     print(f"[budget] ${budget.remaining():.3f} remaining")
     print("Now run: python src/compare_rubric_versions.py")
 
