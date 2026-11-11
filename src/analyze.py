@@ -165,6 +165,58 @@ def cohens_kappa(a: list[bool], b: list[bool]) -> float:
     return (po - pe) / (1 - pe)
 
 
+def agreement_stats(a: list[bool], b: list[bool]) -> dict:
+    """Cohen's kappa alongside the statistics needed to read it.
+
+    Kappa is known to collapse when the category being labeled is rare (the
+    "kappa paradox", Feinstein & Cicchetti 1990): if both raters say "no" to
+    ~90% of items, chance agreement is already ~0.86, so even 88% raw
+    agreement leaves kappa near zero. That is exactly this rubric's situation
+    -- unsafe_reassurance fires on under 10% of responses. So kappa is
+    reported together with:
+
+      prevalence  mean share of "yes" labels across the two raters
+      PABAK       prevalence- and bias-adjusted kappa, 2*Po - 1 (Byrt, Bishop
+                  & Carlin 1993) -- what kappa would be with balanced classes
+      Gwet's AC1  chance-corrected agreement whose chance term stays small
+                  when prevalence is extreme (Gwet 2008)
+
+      pos_agree   positive specific agreement, 2a / (2a + b + c), and
+      neg_agree   negative specific agreement, 2d / (2d + b + c)
+                  (Cicchetti & Feinstein 1990). These separate the two halves
+                  of the agreement that PABAK and AC1 blend together.
+
+    None of these replaces kappa. PABAK and AC1 in particular must not be read
+    alone: with rare positives they are driven almost entirely by agreement on
+    negatives, so they can be high even when the raters almost never flag the
+    SAME failure. pos_agree is the number that answers "do the raters agree on
+    which responses are unsafe" -- the question a safety label depends on.
+    """
+    n = len(a)
+    if n == 0:
+        return {}
+    both_yes = sum(1 for x, y in zip(a, b) if x and y)
+    both_no = sum(1 for x, y in zip(a, b) if not x and not y)
+    disagree = n - both_yes - both_no
+    po = (both_yes + both_no) / n
+    pa, pb = sum(a) / n, sum(b) / n
+    pi = (pa + pb) / 2
+    pe_ac1 = 2 * pi * (1 - pi)
+    ac1 = (po - pe_ac1) / (1 - pe_ac1) if pe_ac1 != 1 else 1.0
+    pos_den = 2 * both_yes + disagree
+    neg_den = 2 * both_no + disagree
+    return {
+        "raw_agreement": round(po, 3),
+        "cohens_kappa": round(cohens_kappa(a, b), 3),
+        "pabak": round(2 * po - 1, 3),
+        "gwet_ac1": round(ac1, 3),
+        "pos_agree": round(2 * both_yes / pos_den, 3) if pos_den else None,
+        "neg_agree": round(2 * both_no / neg_den, 3) if neg_den else None,
+        "prevalence": round(pi, 3),
+        "n_both_yes": both_yes,
+    }
+
+
 def mcnemar_test(df: pd.DataFrame) -> pd.DataFrame:
     """Paired significance test: for each model, does the guarded system
     prompt actually change the fail_any outcome relative to vanilla, on
@@ -223,11 +275,8 @@ def judge_human_agreement(judged: pd.DataFrame, raters: dict[str, Path]) -> pd.D
         for col in FAIL_COLS:
             h = merged[f"{col}_human"].astype(bool).tolist()
             j = merged[f"{col}_judge"].astype(bool).tolist()
-            agreement = sum(1 for x, y in zip(h, j) if x == y) / len(h)
-            kappa = cohens_kappa(h, j)
             all_rows.append(
-                {"rater": rater_name, "dimension": col, "n": len(h),
-                 "raw_agreement": round(agreement, 3), "cohens_kappa": round(kappa, 3)}
+                {"rater": rater_name, "dimension": col, "n": len(h), **agreement_stats(h, j)}
             )
 
     if not all_rows:
@@ -286,11 +335,9 @@ def inter_rater_agreement(raters: dict[str, Path]) -> pd.DataFrame | None:
             for col in FAIL_COLS:
                 x = merged[f"{col}_a"].astype(bool).tolist()
                 y = merged[f"{col}_b"].astype(bool).tolist()
-                agreement = sum(1 for p, q in zip(x, y) if p == q) / len(x)
-                kappa = cohens_kappa(x, y)
                 rows.append(
                     {"rater_a": a_name, "rater_b": b_name, "dimension": col, "n": len(x),
-                     "raw_agreement": round(agreement, 3), "cohens_kappa": round(kappa, 3)}
+                     **agreement_stats(x, y)}
                 )
 
     if not rows:
